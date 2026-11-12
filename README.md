@@ -71,7 +71,7 @@ KV binding 名必须保持为 `MI_HEALTH_KV`。
 4. 客户端轮调 `health_login_poll`，直到返回 `success`。
 5. 登录成功后，使用 `health_latest`、`health_sleep`、`health_heart` 或 `health_steps` 查询数据。
 
-Worker 不生成二维码图片。查询时会动态读取亲友列表并使用第一项，不在代码中写死用户 ID。
+Worker 不生成二维码图片。查询时使用登录账号自己的用户 ID 调取本人数据，不读亲友列表（本 fork 相对上游的改动）。
 
 ## 使用边界
 

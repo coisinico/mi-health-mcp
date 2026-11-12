@@ -291,26 +291,15 @@ function responseResult(response) {
     : {};
 }
 
-async function firstRelative(env, fetchImpl) {
+// 本人数据：用登录账号自己的 user_id 调同一套接口（接口按 UID 取数），
+// 不再读亲友列表、不再取第一位亲友。是否取得到以实测为准。
+async function selfTarget(env) {
   const token = await requireActiveToken(env);
-  const response = await encryptedRequest(
-    fetchImpl,
-    token,
-    "GET",
-    RELATIVES_LIST_PATH,
-  );
-  const relatives = responseResult(response).relative_list;
-  if (!Array.isArray(relatives) || relatives.length === 0) {
-    throw new XiaomiApiError("亲友列表为空");
+  const userId = token.user_id ? String(token.user_id) : "";
+  if (!userId) {
+    throw new XiaomiApiError("凭证缺少有效用户 ID");
   }
-  const relativeUid = relatives[0]?.relative_uid;
-  const validUid =
-    (typeof relativeUid === "number" && Number.isFinite(relativeUid)) ||
-    (typeof relativeUid === "string" && /^\d+$/.test(relativeUid));
-  if (!validUid) {
-    throw new XiaomiApiError("亲友列表第一项缺少有效 UID");
-  }
-  return { token, relativeUid };
+  return { token, userId };
 }
 
 function normalizeLatestItem(item) {
@@ -322,13 +311,13 @@ function normalizeLatestItem(item) {
 }
 
 export async function getLatestHealth(env, fetchImpl = fetch) {
-  const { token, relativeUid } = await firstRelative(env, fetchImpl);
+  const { token, userId } = await selfTarget(env);
   const response = await encryptedRequest(
     fetchImpl,
     token,
     "GET",
     RELATIVES_LATEST_PATH,
-    { relative_uid: relativeUid },
+    { relative_uid: userId },
   );
   const result = responseResult(response);
   const items = Array.isArray(result.data_list) ? result.data_list : [];
@@ -345,7 +334,7 @@ export async function getLatestHealth(env, fetchImpl = fetch) {
   }
 
   return {
-    relative_uid: relativeUid,
+    user_id: userId,
     latest_data_time: Number(result.latest_data_time || 0),
     data: selected,
     message:
@@ -390,7 +379,7 @@ export async function getHealthSeries(
   fetchImpl = fetch,
   now = Date.now(),
 ) {
-  const { token, relativeUid } = await firstRelative(env, fetchImpl);
+  const { token, userId } = await selfTarget(env);
   const { start, end } = cstTodayWindow(now, days);
   const response = await encryptedRequest(
     fetchImpl,
@@ -398,7 +387,7 @@ export async function getHealthSeries(
     "GET",
     RELATIVES_AGGREGATED_PATH,
     {
-      relative_uid: relativeUid,
+      relative_uid: userId,
       key: metric,
       tag: "daily_report",
       start_time: start,
@@ -412,7 +401,7 @@ export async function getHealthSeries(
     .sort((left, right) => left.time - right.time);
 
   return {
-    relative_uid: relativeUid,
+    user_id: userId,
     metric,
     days,
     data,

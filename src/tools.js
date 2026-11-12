@@ -30,22 +30,22 @@ const daysSchema = {
 export const TOOLS = [
   {
     name: "health_latest",
-    description: "查询第一位亲友最新的睡眠、心率和步数快照；仅返回已有数据。",
+    description: "查询本人最新的睡眠、心率和步数快照；仅返回已有数据。",
     inputSchema: emptySchema,
   },
   {
     name: "health_sleep",
-    description: "查询第一位亲友的每日睡眠序列。",
+    description: "查询本人的每日睡眠序列。",
     inputSchema: daysSchema,
   },
   {
     name: "health_heart",
-    description: "查询第一位亲友的每日心率序列。",
+    description: "查询本人的每日心率序列。",
     inputSchema: daysSchema,
   },
   {
     name: "health_steps",
-    description: "查询第一位亲友的每日步数序列。",
+    description: "查询本人的每日步数序列。",
     inputSchema: daysSchema,
   },
   {

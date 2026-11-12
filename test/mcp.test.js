@@ -172,20 +172,11 @@ test("health_auth_status reports metadata without exposing credentials", async (
   assert.doesNotMatch(JSON.stringify(result.json), /service-token-secret|pass-token-secret|c-user-secret/);
 });
 
-test("health_latest resolves the first relative and returns only available metrics", async () => {
+test("health_latest queries the logged-in account's own data and returns only available metrics", async () => {
   const kv = new MemoryKv({
     [TOKEN_KEY]: JSON.stringify(tokenRecord()),
   });
   const fetchImpl = encryptedApiMock({
-    "/app/v1/relatives/get_relative_list": {
-      code: 0,
-      result: {
-        relative_list: [
-          { relative_uid: 42, relative_note: "first" },
-          { relative_uid: 99, relative_note: "second" },
-        ],
-      },
-    },
     "/app/v1/relatives/get_latest_data": {
       code: 0,
       result: {
@@ -219,12 +210,12 @@ test("health_latest resolves the first relative and returns only available metri
   });
   const value = JSON.parse(result.json.result.content[0].text);
 
-  assert.equal(value.relative_uid, 42);
+  assert.equal(value.user_id, "account-user");
   assert.equal(value.data.sleep.total_duration, 455);
   assert.equal(value.data.heart_rate.bpm, 72);
   assert.equal("steps" in value.data, false);
   assert.equal("weight" in value.data, false);
-  assert.equal(fetchImpl.calls.length, 2);
+  assert.equal(fetchImpl.calls.length, 1);
   assert.doesNotMatch(JSON.stringify(result.json), /service-token-secret/);
 });
 
@@ -233,10 +224,6 @@ test("daily series defaults to seven days, accepts empty data, and rejects over 
     [TOKEN_KEY]: JSON.stringify(tokenRecord()),
   });
   const fetchImpl = encryptedApiMock({
-    "/app/v1/relatives/get_relative_list": {
-      code: 0,
-      result: { relative_list: [{ relative_uid: 42 }] },
-    },
     "/app/v1/relatives/get_aggregated_data": {
       code: 0,
       result: { data_list: [] },
@@ -264,16 +251,11 @@ test("daily series defaults to seven days, accepts empty data, and rejects over 
   assert.match(invalid.json.result.content[0].text, /1 到 30/);
 });
 
-test("an empty relative list returns the required explicit error", async () => {
+test("a credential without a user id returns the required explicit error", async () => {
   const kv = new MemoryKv({
-    [TOKEN_KEY]: JSON.stringify(tokenRecord()),
+    [TOKEN_KEY]: JSON.stringify(tokenRecord({ user_id: "" })),
   });
-  const fetchImpl = encryptedApiMock({
-    "/app/v1/relatives/get_relative_list": {
-      code: 0,
-      result: { relative_list: [] },
-    },
-  });
+  const fetchImpl = async () => assert.fail("no network");
   const worker = createWorker({ fetchImpl });
   const result = await callMcp(worker, envWithKv(kv), {
     jsonrpc: "2.0",
@@ -283,7 +265,7 @@ test("an empty relative list returns the required explicit error", async () => {
   });
 
   assert.equal(result.json.result.isError, true);
-  assert.match(result.json.result.content[0].text, /亲友列表为空/);
+  assert.match(result.json.result.content[0].text, /缺少有效用户 ID/);
 });
 
 test("a Xiaomi 401 marks the stored credential expired", async () => {

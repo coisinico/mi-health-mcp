@@ -100,7 +100,7 @@ export async function handleRpc(message, env, fetchImpl = fetch) {
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "mi-health-mcp", version: "1.0.0" },
         instructions:
-          "查询第一位小米运动健康亲友的数据。凭证过期时先调用 health_login_start，再轮询 health_login_poll。",
+          "查询登录账号本人的小米运动健康数据。凭证过期时先调用 health_login_start，再轮询 health_login_poll。",
       },
     };
   }
