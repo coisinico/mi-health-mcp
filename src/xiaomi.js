@@ -11,9 +11,7 @@ const STS_HEALTH_URL = "https://sts-hlth.io.mi.com/healthapp/sts";
 const HEALTH_API_BASE = "https://hlth.io.mi.com";
 const SERVICE_SID = "miothealth";
 
-const RELATIVES_LIST_PATH = "/app/v1/relatives/get_relative_list";
-const RELATIVES_LATEST_PATH = "/app/v1/relatives/get_latest_data";
-const RELATIVES_AGGREGATED_PATH = "/app/v1/relatives/get_aggregated_data";
+const SELF_AGGREGATED_PATH = "/app/v1/data/get_aggregated_fitness_data_by_time";
 
 const API_USER_AGENT = "Android-12-3.53.1-vivo-V2284A";
 const LOGIN_USER_AGENT =
@@ -291,8 +289,9 @@ function responseResult(response) {
     : {};
 }
 
-// 本人数据：用登录账号自己的 user_id 调同一套接口（接口按 UID 取数），
-// 不再读亲友列表、不再取第一位亲友。是否取得到以实测为准。
+// 本人数据：直接调本人日汇总接口（/app/v1/data/get_aggregated_fitness_data_by_time），
+// 接口按登录凭证取数，不传 relative_uid。亲友接口只认真正的亲友 UID，
+// 把本人 UID 当 relative_uid 传过去会报 code=-8（data type not valid）。
 async function selfTarget(env) {
   const token = await requireActiveToken(env);
   const userId = token.user_id ? String(token.user_id) : "";
@@ -310,37 +309,60 @@ function normalizeLatestItem(item) {
   return { time: Number(item?.time || 0), value };
 }
 
-export async function getLatestHealth(env, fetchImpl = fetch) {
+export async function getLatestHealth(env, fetchImpl = fetch, now = Date.now()) {
   const { token, userId } = await selfTarget(env);
-  const response = await encryptedRequest(
-    fetchImpl,
-    token,
-    "GET",
-    RELATIVES_LATEST_PATH,
-    { relative_uid: userId },
-  );
-  const result = responseResult(response);
-  const items = Array.isArray(result.data_list) ? result.data_list : [];
+  const { start, end } = cstTodayWindow(now, 2);
+  const keys = ["sleep", "heart_rate", "steps"];
   const selected = {};
-  const outputNames = {
-    sleep: "sleep",
-    heart_rate: "heart_rate",
-    steps: "steps",
-  };
-  for (const item of items) {
-    if (outputNames[item?.key]) {
-      selected[outputNames[item.key]] = normalizeLatestItem(item);
+  const failures = [];
+  let latestTime = 0;
+
+  for (const key of keys) {
+    let response;
+    try {
+      response = await encryptedRequest(
+        fetchImpl,
+        token,
+        "GET",
+        SELF_AGGREGATED_PATH,
+        {
+          key,
+          tag: "daily_report",
+          start_time: start,
+          end_time: end,
+          limit: 2,
+          reverse: true,
+        },
+      );
+    } catch (error) {
+      // 凭证失效必须整单失败，让上层标记凭证过期；单 key 的数据错误只记下来，
+      // 不影响其余 key。
+      if (error?.authExpired) throw error;
+      failures.push(`${key}：${error?.message || error}`);
+      continue;
     }
+    const items = responseResult(response).data_list;
+    const rows = (Array.isArray(items) ? items : [])
+      .map(normalizeLatestItem)
+      .sort((left, right) => right.time - left.time);
+    if (rows.length > 0) {
+      selected[key] = rows[0];
+      latestTime = Math.max(latestTime, rows[0].time);
+    }
+  }
+
+  let message;
+  if (failures.length > 0) {
+    message = `部分数据读取失败：${failures.join("；")}`;
+  } else if (Object.keys(selected).length === 0) {
+    message = "暂无睡眠、心率或步数数据（设备可能未佩戴或尚未同步）";
   }
 
   return {
     user_id: userId,
-    latest_data_time: Number(result.latest_data_time || 0),
+    latest_data_time: latestTime,
     data: selected,
-    message:
-      Object.keys(selected).length === 0
-        ? "暂无睡眠、心率或步数数据（设备可能未佩戴或尚未同步）"
-        : undefined,
+    message,
   };
 }
 
@@ -385,14 +407,14 @@ export async function getHealthSeries(
     fetchImpl,
     token,
     "GET",
-    RELATIVES_AGGREGATED_PATH,
+    SELF_AGGREGATED_PATH,
     {
-      relative_uid: userId,
       key: metric,
       tag: "daily_report",
       start_time: start,
       end_time: end,
       limit: days,
+      reverse: true,
     },
   );
   const items = responseResult(response).data_list;

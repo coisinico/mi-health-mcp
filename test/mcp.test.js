@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   computeSignedNonce,
+  decryptData,
   encryptData,
 } from "../src/crypto.js";
 import { createWorker } from "../src/index.js";
@@ -172,33 +173,57 @@ test("health_auth_status reports metadata without exposing credentials", async (
   assert.doesNotMatch(JSON.stringify(result.json), /service-token-secret|pass-token-secret|c-user-secret/);
 });
 
-test("health_latest queries the logged-in account's own data and returns only available metrics", async () => {
+async function decryptRequestParams(url) {
+  const signedNonce = await computeSignedNonce(
+    SSECURITY,
+    url.searchParams.get("_nonce"),
+  );
+  return JSON.parse(
+    await decryptData(signedNonce, url.searchParams.get("data")),
+  );
+}
+
+test("health_latest queries the logged-in account's own daily report and returns only available metrics", async () => {
   const kv = new MemoryKv({
     [TOKEN_KEY]: JSON.stringify(tokenRecord()),
   });
+  const seenParams = [];
   const fetchImpl = encryptedApiMock({
-    "/app/v1/relatives/get_latest_data": {
-      code: 0,
-      result: {
-        latest_data_time: 1_787_558_400,
-        data_list: [
-          {
-            key: "sleep",
-            time: 1_787_500_800,
-            value: JSON.stringify({ total_duration: 455, sleep_score: 86 }),
+    "/app/v1/data/get_aggregated_fitness_data_by_time": async (url) => {
+      const params = await decryptRequestParams(url);
+      seenParams.push(params);
+      assert.equal(params.tag, "daily_report");
+      assert.equal(params.reverse, true);
+      assert.equal(params.limit, 2);
+      assert.equal("relative_uid" in params, false);
+      const fixtures = {
+        sleep: {
+          code: 0,
+          result: {
+            data_list: [
+              {
+                key: "sleep",
+                time: 1_787_500_800,
+                value: JSON.stringify({ total_duration: 455, sleep_score: 86 }),
+              },
+            ],
           },
-          {
-            key: "heart_rate",
-            time: 1_787_558_300,
-            value: JSON.stringify({ bpm: 72 }),
+        },
+        heart_rate: {
+          code: 0,
+          result: {
+            data_list: [
+              {
+                key: "heart_rate",
+                time: 1_787_558_300,
+                value: JSON.stringify({ bpm: 72 }),
+              },
+            ],
           },
-          {
-            key: "weight",
-            time: 1_787_550_000,
-            value: "{\"weight\":52.3}",
-          },
-        ],
-      },
+        },
+        steps: { code: 0, result: { data_list: [] } },
+      };
+      return fixtures[params.key];
     },
   });
   const worker = createWorker({ fetchImpl });
@@ -211,22 +236,73 @@ test("health_latest queries the logged-in account's own data and returns only av
   const value = JSON.parse(result.json.result.content[0].text);
 
   assert.equal(value.user_id, "account-user");
+  assert.equal(value.latest_data_time, 1_787_558_300);
   assert.equal(value.data.sleep.total_duration, 455);
   assert.equal(value.data.heart_rate.bpm, 72);
   assert.equal("steps" in value.data, false);
-  assert.equal("weight" in value.data, false);
-  assert.equal(fetchImpl.calls.length, 1);
+  assert.equal(value.message, undefined);
+  assert.deepEqual(
+    seenParams.map((params) => params.key),
+    ["sleep", "heart_rate", "steps"],
+  );
+  assert.equal(fetchImpl.calls.length, 3);
   assert.doesNotMatch(JSON.stringify(result.json), /service-token-secret/);
+});
+
+test("health_latest keeps the other metrics when one daily-report key fails", async () => {
+  const kv = new MemoryKv({
+    [TOKEN_KEY]: JSON.stringify(tokenRecord()),
+  });
+  const fetchImpl = encryptedApiMock({
+    "/app/v1/data/get_aggregated_fitness_data_by_time": async (url) => {
+      const params = await decryptRequestParams(url);
+      if (params.key === "sleep") {
+        return { code: -8, message: "data type not valid" };
+      }
+      return {
+        code: 0,
+        result: {
+          data_list: [
+            {
+              key: params.key,
+              time: 1_787_558_300,
+              value: JSON.stringify({ bpm: 72 }),
+            },
+          ],
+        },
+      };
+    },
+  });
+  const worker = createWorker({ fetchImpl });
+  const result = await callMcp(worker, envWithKv(kv), {
+    jsonrpc: "2.0",
+    id: 5,
+    method: "tools/call",
+    params: { name: "health_latest", arguments: {} },
+  });
+  const value = JSON.parse(result.json.result.content[0].text);
+
+  assert.equal(result.json.result.isError, undefined);
+  assert.equal("sleep" in value.data, false);
+  assert.equal(value.data.heart_rate.bpm, 72);
+  assert.equal(value.data.steps.bpm, 72);
+  assert.match(value.message, /sleep/);
+  assert.match(value.message, /code=-8/);
 });
 
 test("daily series defaults to seven days, accepts empty data, and rejects over 30", async () => {
   const kv = new MemoryKv({
     [TOKEN_KEY]: JSON.stringify(tokenRecord()),
   });
+  const seenParams = [];
   const fetchImpl = encryptedApiMock({
-    "/app/v1/relatives/get_aggregated_data": {
-      code: 0,
-      result: { data_list: [] },
+    "/app/v1/data/get_aggregated_fitness_data_by_time": async (url) => {
+      const params = await decryptRequestParams(url);
+      seenParams.push(params);
+      return {
+        code: 0,
+        result: { data_list: [] },
+      };
     },
   });
   const worker = createWorker({ fetchImpl });
@@ -240,6 +316,12 @@ test("daily series defaults to seven days, accepts empty data, and rejects over 
   assert.equal(value.days, 7);
   assert.deepEqual(value.data, []);
   assert.match(value.message, /暂无数据/);
+  assert.equal(seenParams.length, 1);
+  assert.equal(seenParams[0].key, "sleep");
+  assert.equal(seenParams[0].tag, "daily_report");
+  assert.equal(seenParams[0].reverse, true);
+  assert.equal(seenParams[0].limit, 7);
+  assert.equal("relative_uid" in seenParams[0], false);
 
   const invalid = await callMcp(worker, envWithKv(kv), {
     jsonrpc: "2.0",
