@@ -7,5 +7,8 @@ workers_dev = true
 enabled = true
 head_sampling_rate = 1
 
-# KV 绑定在 Cloudflare 控制台 Settings → Bindings 里配（变量名 MI_HEALTH_KV，
-# 选 mi-health-kv 这个 namespace），不在这里写 id：占位 id 会导致部署失败。
+[[kv_namespaces]]
+binding = "MI_HEALTH_KV"
+# 真实 namespace id（2026-11-13 控制台黄条配置片段确认）。必须写在这里：
+# 控制台手工绑的绑定会被 wrangler deploy 全量覆盖抹掉，写进配置才永久生效。
+id = "61a05a19f0f74996a343e3392fb09ae6"
