@@ -7,8 +7,5 @@ workers_dev = true
 enabled = true
 head_sampling_rate = 1
 
-[[kv_namespaces]]
-binding = "MI_HEALTH_KV"
-# 运行 `npx wrangler kv namespace create MI_HEALTH_KV` 创建 namespace，
-# 再将下面的占位符替换为命令输出的 namespace id。
-id = "your-kv-namespace-id"
+# KV 绑定在 Cloudflare 控制台 Settings → Bindings 里配（变量名 MI_HEALTH_KV，
+# 选 mi-health-kv 这个 namespace），不在这里写 id：占位 id 会导致部署失败。
