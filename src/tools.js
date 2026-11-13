@@ -2,6 +2,7 @@ import {
   getAuthStatus,
   getHealthSeries,
   getLatestHealth,
+  getMenstruation,
   markTokenExpired,
   pollQrLogin,
   startQrLogin,
@@ -22,6 +23,20 @@ const daysSchema = {
       maximum: 30,
       default: 7,
       description: "查询天数，默认 7，最多 30。",
+    },
+  },
+  additionalProperties: false,
+};
+
+const menstruationSchema = {
+  type: "object",
+  properties: {
+    days: {
+      type: "integer",
+      minimum: 1,
+      maximum: 90,
+      default: 90,
+      description: "查询天数，默认 90，最多 90（经期记录稀疏，需看更长窗口）。",
     },
   },
   additionalProperties: false,
@@ -49,6 +64,11 @@ export const TOOLS = [
     inputSchema: daysSchema,
   },
   {
+    name: "health_menstruation",
+    description: "查询本人的经期记录（默认近 90 天）。",
+    inputSchema: menstruationSchema,
+  },
+  {
     name: "health_auth_status",
     description: "查看小米凭证是否存在、用户 ID、状态和最后更新时间；不会返回凭证本体。",
     inputSchema: emptySchema,
@@ -69,6 +89,14 @@ function parseDays(args) {
   if (args.days === undefined) return 7;
   if (!Number.isInteger(args.days) || args.days < 1 || args.days > 30) {
     throw new Error("days 必须是 1 到 30 的整数");
+  }
+  return args.days;
+}
+
+function parseMenstruationDays(args) {
+  if (args.days === undefined) return 90;
+  if (!Number.isInteger(args.days) || args.days < 1 || args.days > 90) {
+    throw new Error("days 必须是 1 到 90 的整数");
   }
   return args.days;
 }
@@ -109,6 +137,10 @@ export async function callTool(
     case "health_steps":
       return withAuthTracking(env, () =>
         getHealthSeries(env, "steps", parseDays(args), fetchImpl),
+      );
+    case "health_menstruation":
+      return withAuthTracking(env, () =>
+        getMenstruation(env, parseMenstruationDays(args), fetchImpl),
       );
     case "health_auth_status":
       return getAuthStatus(env);

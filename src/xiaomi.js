@@ -12,6 +12,7 @@ const HEALTH_API_BASE = "https://hlth.io.mi.com";
 const SERVICE_SID = "miothealth";
 
 const SELF_AGGREGATED_PATH = "/app/v1/data/get_aggregated_fitness_data_by_time";
+const SELF_FITNESS_PATH = "/app/v1/data/get_fitness_data_by_time";
 
 const API_USER_AGENT = "Android-12-3.53.1-vivo-V2284A";
 const LOGIN_USER_AGENT =
@@ -431,6 +432,120 @@ export async function getHealthSeries(
       data.length === 0
         ? "暂无数据（设备可能未佩戴或尚未同步）"
         : undefined,
+  };
+}
+
+// 经期：小米运动健康云端确有 menstruation 数据键（与睡眠/心率同属 fitness 键集），
+// 但它不一定走日汇总口子。按下述顺序试，拿到数据即停；鉴权失败直接上抛，
+// 让上层标记凭证过期。三个口子都没数据时如实返回尝试记录，不编造。
+export async function getMenstruation(
+  env,
+  days,
+  fetchImpl = fetch,
+  now = Date.now(),
+) {
+  const { token, userId } = await selfTarget(env);
+  const endMs = now;
+  const startMs = now - days * 86400 * 1000;
+  const attempts = [];
+
+  try {
+    const response = await encryptedRequest(
+      fetchImpl,
+      token,
+      "GET",
+      SELF_FITNESS_PATH,
+      {
+        key: "menstruation",
+        startTime: startMs,
+        endTime: endMs,
+        reverse: true,
+        next_key: null,
+      },
+    );
+    const items = responseResult(response).data_list;
+    const data = (Array.isArray(items) ? items : [])
+      .map(normalizeSeriesItem)
+      .sort((left, right) => left.time - right.time);
+    if (data.length > 0) {
+      return {
+        user_id: userId,
+        metric: "menstruation",
+        days,
+        data,
+        strategy: "fitness_data_by_time",
+        message: undefined,
+      };
+    }
+    attempts.push("fitness_data_by_time：无数据");
+  } catch (error) {
+    if (error?.authExpired) throw error;
+    attempts.push(`fitness_data_by_time：${error?.message || error}`);
+  }
+
+  try {
+    const series = await getHealthSeries(
+      env,
+      "menstruation",
+      days,
+      fetchImpl,
+      now,
+    );
+    if (series.data.length > 0) {
+      return {
+        ...series,
+        strategy: "aggregated_daily_report",
+        message: undefined,
+      };
+    }
+    attempts.push("aggregated daily_report：无数据");
+  } catch (error) {
+    if (error?.authExpired) throw error;
+    attempts.push(`aggregated daily_report：${error?.message || error}`);
+  }
+
+  try {
+    const response = await encryptedRequest(
+      fetchImpl,
+      token,
+      "GET",
+      SELF_AGGREGATED_PATH,
+      {
+        tag: "daily_fitness",
+        key: "menstruation",
+        startTime: startMs,
+        endTime: endMs,
+        cursor: null,
+        reverse: true,
+      },
+    );
+    const items = responseResult(response).data_list;
+    const data = (Array.isArray(items) ? items : [])
+      .map(normalizeSeriesItem)
+      .sort((left, right) => left.time - right.time);
+    if (data.length > 0) {
+      return {
+        user_id: userId,
+        metric: "menstruation",
+        days,
+        data,
+        strategy: "aggregated_daily_fitness",
+        message: undefined,
+      };
+    }
+    attempts.push("aggregated daily_fitness：无数据");
+  } catch (error) {
+    if (error?.authExpired) throw error;
+    attempts.push(`aggregated daily_fitness：${error?.message || error}`);
+  }
+
+  return {
+    user_id: userId,
+    metric: "menstruation",
+    days,
+    data: [],
+    strategy: "none",
+    message: `三个口子都未读到经期记录：${attempts.join("；")}`,
   };
 }
 

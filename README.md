@@ -69,7 +69,7 @@ KV binding 名必须保持为 `MI_HEALTH_KV`。
 2. 使用任意二维码工具把 `loginUrl` 渲染成二维码。
 3. 用小米运动健康 App 扫码并确认登录。
 4. 客户端轮调 `health_login_poll`，直到返回 `success`。
-5. 登录成功后，使用 `health_latest`、`health_sleep`、`health_heart` 或 `health_steps` 查询数据。
+5. 登录成功后，使用 `health_latest`、`health_sleep`、`health_heart`、`health_steps` 或 `health_menstruation` 查询数据。
 
 Worker 不生成二维码图片。查询时使用登录账号自己的用户 ID 调取本人数据，不读亲友列表（本 fork 相对上游的改动）。
 

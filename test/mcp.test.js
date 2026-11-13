@@ -135,6 +135,7 @@ test("initialize, tools/list, and initialized notification follow JSON-RPC", asy
       "health_sleep",
       "health_heart",
       "health_steps",
+      "health_menstruation",
       "health_auth_status",
       "health_login_start",
       "health_login_poll",
@@ -450,4 +451,86 @@ test("QR start and poll store refreshed credentials without returning them", asy
     /new-service-secret|new-pass-secret|new-c-user-secret/,
   );
   assert.equal(calls.some((url) => url.includes("/healthapp/sts")), true);
+});
+
+test("health_menstruation reads cycle records through the fitness endpoint", async () => {
+  const kv = new MemoryKv({
+    [TOKEN_KEY]: JSON.stringify(tokenRecord()),
+  });
+  const fetchImpl = encryptedApiMock({
+    "/app/v1/data/get_fitness_data_by_time": async (url) => {
+      const params = await decryptRequestParams(url);
+      assert.equal(params.key, "menstruation");
+      assert.equal(params.reverse, true);
+      return {
+        code: 0,
+        result: {
+          data_list: [
+            {
+              key: "menstruation",
+              time: 1_787_000_000,
+              value: JSON.stringify({ cycle_length: 28, period_length: 5 }),
+            },
+          ],
+        },
+      };
+    },
+  });
+  const worker = createWorker({ fetchImpl });
+  const result = await callMcp(worker, envWithKv(kv), {
+    jsonrpc: "2.0",
+    id: 11,
+    method: "tools/call",
+    params: { name: "health_menstruation", arguments: { days: 90 } },
+  });
+  const value = JSON.parse(result.json.result.content[0].text);
+
+  assert.equal(value.metric, "menstruation");
+  assert.equal(value.days, 90);
+  assert.equal(value.strategy, "fitness_data_by_time");
+  assert.equal(value.data.length, 1);
+  assert.equal(value.data[0].cycle_length, 28);
+  assert.equal(value.data[0].period_length, 5);
+  assert.equal(value.message, undefined);
+});
+
+test("health_menstruation falls back to aggregated daily_report when fitness rejects the key", async () => {
+  const kv = new MemoryKv({
+    [TOKEN_KEY]: JSON.stringify(tokenRecord()),
+  });
+  const fetchImpl = encryptedApiMock({
+    "/app/v1/data/get_fitness_data_by_time": async () => ({
+      code: -8,
+      message: "data type not valid",
+    }),
+    "/app/v1/data/get_aggregated_fitness_data_by_time": async (url) => {
+      const params = await decryptRequestParams(url);
+      assert.equal(params.key, "menstruation");
+      return {
+        code: 0,
+        result: {
+          data_list: [
+            {
+              key: "menstruation",
+              time: 1_787_000_000,
+              value: JSON.stringify({ cycle_length: 30 }),
+            },
+          ],
+        },
+      };
+    },
+  });
+  const worker = createWorker({ fetchImpl });
+  const result = await callMcp(worker, envWithKv(kv), {
+    jsonrpc: "2.0",
+    id: 12,
+    method: "tools/call",
+    params: { name: "health_menstruation", arguments: {} },
+  });
+  const value = JSON.parse(result.json.result.content[0].text);
+
+  assert.equal(value.strategy, "aggregated_daily_report");
+  assert.equal(value.days, 90);
+  assert.equal(value.data.length, 1);
+  assert.equal(value.data[0].cycle_length, 30);
 });
